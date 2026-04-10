@@ -6,7 +6,7 @@
 # Repository: https://github.com/opscart/docker-internals-guide
 #
 # Usage:
-#   sudo ./statistical-benchmark.sh [ITERATIONS] [PLATFORM_LABEL]
+#   sudo ./statistical-benchmark.sh [AMOUNT] [ITERATIONS] [PLATFORM_LABEL]
 #
 # Examples:
 #   sudo ./statistical-benchmark.sh 50 azure-premium-ssd
@@ -23,13 +23,15 @@
 
 set -euo pipefail
 
-ITERATIONS=${1:-50}
-# PLATFORM=${2:-"unknown-platform"}
-PLATFORM="RPi4b" # FIXME manually override platform
+AMOUNT=${1:-1}
+ITERATIONS=${2:-50}
+
+# PLATFORM=${3:-"unknown-platform"}
+PLATFORM="macos-m2-docker" # FIXME manually override platform TODO RPi4b
 RESULTS_DIR="results/${PLATFORM}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-DOCKER_IMAGE="alpine/python" #s
+DOCKER_IMAGE="python:3.11-slim"
 PYTHON_SCRIPT_PATH="cpu_test.py"
 CPU_LIMIT="0.5" # CPU limit for container (e.g., 0.5 CPU core)
 
@@ -649,52 +651,81 @@ echo -e "${BLUE}[3/10] CPU Throttling (Python Script, ${ITERATIONS} iterations).
 CSV="${RESULTS_DIR}/03-cpu-throttling-python.csv"
 # echo "iteration,target_pct,measured_pct,variance_pct" > "${CSV}"
 
-echo "Iteration,Type,CPU_Limit,Duration_ms,Result_Iterations" > "${CSV}"
+echo "Iteration,Type,Session,CPU_Limit,Duration_ms,Result" > "${CSV}"
 
 # --- Run without Container (Baseline) ---
-echo -e "${GREEN}Running CPU test directly on host (baseline)...${NC}"
-for i in $(seq 1 ${ITERATIONS}); do
+echo -e "${GREEN}Running CPU test directly on host (baseline) with ${AMOUNT} parallel sessions...${NC}"
+
+run_single_session() {
+    local i=$1
+    local session=$2
+
     sleep 0.5
 
     START=$(now_ns)
-    # Run the Python script directly on the host
-    RESULT=$(python "$(pwd)/cpu_test.py" 2>/dev/null)
+    RESULT=$(python3 "$(pwd)/${PYTHON_SCRIPT_PATH}" 2>/dev/null)
     END=$(now_ns)
 
     ELAPSED_NS=$((END - START))
     ELAPSED_MS=$(echo "scale=2; ${ELAPSED_NS} / 1000000" | bc)
-
-    # Ensure result is a number
     RESULT_INT=$(echo "$RESULT" | grep -o -E '^[0-9]+' || echo "0")
 
-    echo "${i},Host,N/A,${ELAPSED_MS},${RESULT_INT}" >> "${CSV}"
+    echo "${i},Host,Session-${session},${CPU_LIMIT},${ELAPSED_MS},${RESULT_INT}" >> "${CSV}"
+}
+
+for i in $(seq 1 ${ITERATIONS}); do
+    PIDS=()
+    for session in $(seq 1 ${AMOUNT}); do
+        run_single_session "$i" "$session" &
+        PIDS+=($!)
+    done
+
+    # Wait for all parallel sessions to finish
+    for pid in "${PIDS[@]}"; do
+        wait "$pid"
+    done
+
     if (( i % 10 == 0 )); then echo -e "    ${GREEN}${i}/${ITERATIONS}${NC}"; fi
 done
 echo -e "${GREEN}Host test complete.${NC}"
 
 # # --- Run with Container ---
-# echo -e "${GREEN}Running CPU test inside Docker container (with --cpus=${CPU_LIMIT})...${NC}"
+# --- Run with Container ---
+echo -e "${GREEN}Running CPU test inside Docker container (with --cpus=${CPU_LIMIT}) and ${AMOUNT} parallel sessions...${NC}"
 
-# for i in $(seq 1 ${ITERATIONS}); do
-#     sleep 0.5
-    
-#     START=$(now_ns)
+run_container_session() {
+    local i=$1
+    local session=$2
+    sleep 0.5
 
-#     MEASURED=$(docker run --rm --cpus=${CPU_LIMIT} \
-#         -v "$(pwd)/cpu_test.py:${PYTHON_SCRIPT_PATH}" \
-#         "${DOCKER_IMAGE}" python3 "${PYTHON_SCRIPT_PATH}" 2>/dev/null)
-    
-#     END=$(now_ns) # Capture END time immediately after the docker run command
+    START=$(now_ns)
+    MEASURED=$(docker run --rm --cpus=${CPU_LIMIT} \
+        -v "$(pwd)/${PYTHON_SCRIPT_PATH}:/${PYTHON_SCRIPT_PATH}" \
+        "${DOCKER_IMAGE}" python3 "/${PYTHON_SCRIPT_PATH}" 2>/dev/null)
+    END=$(now_ns)
 
-#     ELAPSED_NS=$((END - START))
-#     ELAPSED_MS=$(echo "scale=2; ${ELAPSED_NS} / 1000000" | bc)
+    ELAPSED_NS=$((END - START))
+    ELAPSED_MS=$(echo "scale=2; ${ELAPSED_NS} / 1000000" | bc)
+    MEASURED_INT=$(echo "$MEASURED" | grep -o -E '^[0-9]+' || echo "0")
+    echo "${i},Container,Session-${session},${CPU_LIMIT},${ELAPSED_MS},${MEASURED_INT}" >> "${CSV}"
+}
 
-#     # Ensure MEASURED is a number
-#     MEASURED_INT=$(echo "$MEASURED" | grep -o -E '^[0-9]+' || echo "0")
+for i in $(seq 1 ${ITERATIONS}); do
+    PIDS=()
+    for session in $(seq 1 ${AMOUNT}); do
+        run_container_session "$i" "$session" &
+        PIDS+=($!)
+    done
 
-#     echo "${i},Container,${CPU_LIMIT},${ELAPSED_MS},${MEASURED_INT}" >> "${CSV}"
-#     if (( i % 10 == 0 )); then echo -e "    ${GREEN}${i}/${ITERATIONS}${NC}"; fi
-# done
+    # Wait for all parallel sessions to finish
+    for pid in "${PIDS[@]}"; do
+        wait "$pid"
+    done
+
+    if (( i % 10 == 0 )); then echo -e "    ${GREEN}${i}/${ITERATIONS}${NC}"; fi
+done
+echo -e "${GREEN}Container test complete.${NC}"
+echo ""
 
 echo -e "${GREEN}Test X complete.${NC}"
 echo ""
