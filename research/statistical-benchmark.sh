@@ -23,17 +23,20 @@
 
 set -euo pipefail
 
-AMOUNT=${1:-1}
-ITERATIONS=${2:-50}
+AMOUNT=${1:-1} # Number of parallel sessions
+ITERATIONS=${2:-50} # Number of experiment iteration
 
 # PLATFORM=${3:-"unknown-platform"}
-PLATFORM="macos-m2-docker" # FIXME manually override platform TODO RPi4b
+PLATFORM="macos-m2-docker" # FIXME manually overriden platform use RPi4b
 RESULTS_DIR="results/${PLATFORM}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-DOCKER_IMAGE="python:3.11-slim"
 PYTHON_SCRIPT_PATH="cpu_test.py"
+PYTHON_UPLIM_ARG=10 # FIXME get from bash arg
 CPU_LIMIT="0.5" # CPU limit for container (e.g., 0.5 CPU core)
+VENV_DIR=".venv" # Directory for the uv virtual environment
+
+DOCKER_IMAGE="python:3.11-slim"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -53,14 +56,52 @@ echo ""
 
 mkdir -p "${RESULTS_DIR}"
 
-# Pre-pull images
-echo -e "${YELLOW}Pre-pulling images...${NC}"
-docker pull alpine:latest > /dev/null 2>&1
-docker pull nginx:latest > /dev/null 2>&1
-docker pull nginx:alpine > /dev/null 2>&1
-docker pull python:3.11-slim > /dev/null 2>&1
-echo -e "${GREEN}Images ready.${NC}"
-echo ""
+# # Pre-pull images
+# echo -e "${YELLOW}Pre-pulling images...${NC}"
+# docker pull alpine:latest > /dev/null 2>&1
+# docker pull nginx:latest > /dev/null 2>&1
+# docker pull nginx:alpine > /dev/null 2>&1
+# docker pull python:3.11-slim > /dev/null 2>&1
+# echo -e "${GREEN}Images ready.${NC}"
+# echo ""
+
+# 
+# =============================================================================
+# uv Setup
+# =============================================================================
+echo -e "${BLUE}[0/10] Checking for uv installation...${NC}"
+UV_BIN=$(command -v uv)
+if [ -z "$UV_BIN" ]; then
+    echo -e "${BLUE}uv not found. Downloading uv...${NC}"
+    # This downloads uv to the current directory, adjust if you prefer a different location
+    # Get OS and architecture for uv download
+    OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+    ARCH=$(uname -m)
+
+    case "$OS" in
+        linux) OS="unknown-linux-gnu" ;;
+        darwin) OS="apple-darwin" ;;
+        *) echo "Unsupported OS: $OS"; exit 1 ;;
+    esac
+
+    case "$ARCH" in
+        x86_64) ARCH="x86_64" ;;
+        arm64|aarch64) ARCH="aarch64" ;;
+        *) echo "Unsupported architecture: $ARCH"; exit 1 ;;
+    esac
+
+    UV_URL="https://github.com/astral-sh/uv/releases/latest/download/uv-${ARCH}-${OS}"
+    curl -L "$UV_URL" -o uv
+    chmod +x uv
+    UV_BIN="$(pwd)/uv" # Set UV_BIN to the downloaded executable
+    echo -e "${GREEN}uv downloaded to $(pwd)/uv.${NC}"
+else
+    echo -e "${GREEN}uv found at $UV_BIN.${NC}"
+fi
+
+# --- Create and activate uv venv, install dependencies ---
+echo -e "${BLUE} Setting up uv virtual environment...${NC}"
+"$UV_BIN" venv "${VENV_DIR}" || { echo "Failed to create uv venv"; exit 1; }
 
 # =============================================================================
 # HELPERS
@@ -649,9 +690,7 @@ echo ""
 echo -e "${BLUE}[3/10] CPU Throttling (Python Script, ${ITERATIONS} iterations)...${NC}"
 
 CSV="${RESULTS_DIR}/03-cpu-throttling-python.csv"
-# echo "iteration,target_pct,measured_pct,variance_pct" > "${CSV}"
-
-echo "Iteration,Type,Session,CPU_Limit,Duration_ms,Result" > "${CSV}"
+echo "Iteration,Type,Session,CPU_Limit,UpperLimit,Duration_ms,Result" > "${CSV}"
 
 # --- Run without Container (Baseline) ---
 echo -e "${GREEN}Running CPU test directly on host (baseline) with ${AMOUNT} parallel sessions...${NC}"
@@ -663,14 +702,17 @@ run_single_session() {
     sleep 0.5
 
     START=$(now_ns)
-    RESULT=$(python3 "$(pwd)/${PYTHON_SCRIPT_PATH}" 2>/dev/null)
+
+    # RESULT=$("$(pwd)/runme.exe" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
+    # TODO fix python in venv /dependencies? run docker py?
+    RESULT=$("$UV_BIN" run --python "$(pwd)/${VENV_DIR}/bin/python" "${PYTHON_SCRIPT_PATH}" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
     END=$(now_ns)
 
     ELAPSED_NS=$((END - START))
     ELAPSED_MS=$(echo "scale=2; ${ELAPSED_NS} / 1000000" | bc)
-    RESULT_INT=$(echo "$RESULT" | grep -o -E '^[0-9]+' || echo "0")
+    RESULT_INT=$(echo "$RESULT"|  grep -o -E '^[0-9]+' || echo "0")
 
-    echo "${i},Host,Session-${session},${CPU_LIMIT},${ELAPSED_MS},${RESULT_INT}" >> "${CSV}"
+    echo "${i},Host,Session-${session},${CPU_LIMIT},${UPPER_LIM},${ELAPSED_MS},${RESULT_INT}" >> "${CSV}"
 }
 
 for i in $(seq 1 ${ITERATIONS}); do
@@ -690,45 +732,44 @@ done
 echo -e "${GREEN}Host test complete.${NC}"
 
 # # --- Run with Container ---
-# --- Run with Container ---
-echo -e "${GREEN}Running CPU test inside Docker container (with --cpus=${CPU_LIMIT}) and ${AMOUNT} parallel sessions...${NC}"
+# echo -e "${GREEN}Running CPU test inside Docker container (with --cpus=${CPU_LIMIT}) and ${AMOUNT} parallel sessions...${NC}"
 
-run_container_session() {
-    local i=$1
-    local session=$2
-    sleep 0.5
+# run_container_session() {
+#     local i=$1
+#     local session=$2
+#     sleep 0.5
 
-    START=$(now_ns)
-    MEASURED=$(docker run --rm --cpus=${CPU_LIMIT} \
-        -v "$(pwd)/${PYTHON_SCRIPT_PATH}:/${PYTHON_SCRIPT_PATH}" \
-        "${DOCKER_IMAGE}" python3 "/${PYTHON_SCRIPT_PATH}" 2>/dev/null)
-    END=$(now_ns)
+#     START=$(now_ns)
+#     MEASURED=$(docker run --rm --cpus=${CPU_LIMIT} \
+#         -v "$(pwd)/${PYTHON_SCRIPT_PATH}:/${PYTHON_SCRIPT_PATH}" \
+#         "${DOCKER_IMAGE}" python3 "/${PYTHON_SCRIPT_PATH}" 2>/dev/null)
+#     END=$(now_ns)
 
-    ELAPSED_NS=$((END - START))
-    ELAPSED_MS=$(echo "scale=2; ${ELAPSED_NS} / 1000000" | bc)
-    MEASURED_INT=$(echo "$MEASURED" | grep -o -E '^[0-9]+' || echo "0")
-    echo "${i},Container,Session-${session},${CPU_LIMIT},${ELAPSED_MS},${MEASURED_INT}" >> "${CSV}"
-}
+#     ELAPSED_NS=$((END - START))
+#     ELAPSED_MS=$(echo "scale=2; ${ELAPSED_NS} / 1000000" | bc)
+#     MEASURED_INT=$(echo "$MEASURED" | grep -o -E '^[0-9]+' || echo "0")
+#     echo "${i},Container,Session-${session},${CPU_LIMIT},${ELAPSED_MS},${MEASURED_INT}" >> "${CSV}"
+# }
 
-for i in $(seq 1 ${ITERATIONS}); do
-    PIDS=()
-    for session in $(seq 1 ${AMOUNT}); do
-        run_container_session "$i" "$session" &
-        PIDS+=($!)
-    done
+# for i in $(seq 1 ${ITERATIONS}); do
+#     PIDS=()
+#     for session in $(seq 1 ${AMOUNT}); do
+#         run_container_session "$i" "$session" &
+#         PIDS+=($!)
+#     done
 
-    # Wait for all parallel sessions to finish
-    for pid in "${PIDS[@]}"; do
-        wait "$pid"
-    done
+#     # Wait for all parallel sessions to finish
+#     for pid in "${PIDS[@]}"; do
+#         wait "$pid"
+#     done
 
-    if (( i % 10 == 0 )); then echo -e "    ${GREEN}${i}/${ITERATIONS}${NC}"; fi
-done
-echo -e "${GREEN}Container test complete.${NC}"
-echo ""
+#     if (( i % 10 == 0 )); then echo -e "    ${GREEN}${i}/${ITERATIONS}${NC}"; fi
+# done
+# echo -e "${GREEN}Container test complete.${NC}"
+# echo ""
 
-echo -e "${GREEN}Test X complete.${NC}"
-echo ""
+# echo -e "${GREEN}Test X complete.${NC}"
+# echo ""
 
 # =============================================================================
 # FINAL SUMMARY
