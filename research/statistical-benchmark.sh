@@ -684,8 +684,8 @@ echo ""
 # } > "${QUAL_FILE}" 2>&1
 
 # =============================================================================
-# [X/10] CPU THROTTLING STOPWATCH (Adapted CPU micro benchmark))
-# Sets --cpus=0.5 (50%) and measures actual utilization vs unrestricted
+# [X/10] CPU THROTTLING (Adapted CPU micro benchmark))
+# Sieve of Eratosthenes CPU workload parallel sessions on the host.
 # =============================================================================
 echo -e "${BLUE}[3/10] CPU Throttling (Python Script, ${ITERATIONS} iterations)...${NC}"
 
@@ -703,9 +703,9 @@ run_single_session() {
 
     START=$(now_ns)
 
-    # RESULT=$("$(pwd)/runme.exe" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
-    # TODO fix python in venv /dependencies? run docker py?
-    RESULT=$("$UV_BIN" run --python "$(pwd)/${VENV_DIR}/bin/python" "${PYTHON_SCRIPT_PATH}" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
+    # TODO use either c or python version?
+    # RESULT=$("$(pwd)/runme.exe" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null) 
+    RESULT=$("$UV_BIN" run --python "$(cat .python-version)" "${PYTHON_SCRIPT_PATH}" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
     END=$(now_ns)
 
     ELAPSED_NS=$((END - START))

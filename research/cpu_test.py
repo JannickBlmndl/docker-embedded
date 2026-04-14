@@ -1,6 +1,6 @@
 """Simple sleep task
 
-Finds prime numbers using int SieveOfEratosthenesm, within upper limit -n prints the number of found primes"""
+Finds prime numbers using int SieveOfEratosthenes, with upper limit -n prints the number of found primes"""
 
 import os
 import sys
