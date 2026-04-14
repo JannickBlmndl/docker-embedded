@@ -1,14 +1,14 @@
 """Simple sleep task
 
-Finds prime numbers using int SieveOfEratosthenesm, within upper limit --n prints the number of found primes"""
+Finds prime numbers using int SieveOfEratosthenesm, within upper limit -n prints the number of found primes"""
 
 import os
 import sys
-import math
 
+import math
+import numpy as np
 import random
 # import time
-import numpy as np
 
 def rand_number():
     random_numbers = [random.random() for i in range(100000)]
@@ -26,14 +26,14 @@ def sieve(n : int):
         if primes[p]:
             primes[p*p:n+1:p] = False
             
-    # print(np.nonzero(primes)[0].tolist() #  list of found primes
+    # print(np.nonzero(primes)[0].tolist()) # list of found primes
     # number of primes
     count = len(np.nonzero(primes)[0].tolist())
     return count
 
 def main():
 
-    # result = simple_calc()
+    # result = rand_number()
     if len(sys.argv) < 2:
         print("cpu test")
         print("=" * 50)
@@ -43,7 +43,7 @@ def main():
         print()
         sys.exit(1)
 
-    if sys.argv[1] == '--n':
+    if sys.argv[1] == '-n':
         if len(sys.argv) < 3:
             print("Error: '--n' flag requires a value")
             sys.exit(1)

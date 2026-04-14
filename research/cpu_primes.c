@@ -11,7 +11,7 @@
             gcc_win64 prime.c -o runme_win64.exe
             https://www.mingw-w64.org/
 
-    Usage: ./runme --n [UPPER_LIMIT]
+    Usage: ./runme -n [UPPER_LIMIT]
 */
 
 // Defines
@@ -81,7 +81,7 @@ int main(int argc, char *argv[])
   signed int n;
 
   // parse from cmd line argument
-  if (argc >= 3 && strcmp(argv[1], "--n") == 0)
+  if (argc >= 3 && strcmp(argv[1], "-n") == 0)
   {
     char *endptr;
     n = (int)strtol(argv[2], &endptr, 10);
