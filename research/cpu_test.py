@@ -1,6 +1,18 @@
-"""Simple sleep task
+# /// script
+# requires-python = ">=3.13"
+# dependencies = [
+#     "numpy>=2.4.0",
+# ]
+# ///
+""" CPU primes workload
 
-Finds prime numbers using int SieveOfEratosthenes, with upper limit -n prints the number of found primes"""
+Finds prime numbers using Sieve of Eratosthenes, with upper limit n.
+Output the number of found primes.
+
+Usage:
+uv run cpu_test.py -n [UPPER_LIMT]
+
+"""
 
 import os
 import sys
@@ -8,7 +20,6 @@ import sys
 import math
 import numpy as np
 import random
-# import time
 
 def rand_number():
     random_numbers = [random.random() for i in range(100000)]
@@ -32,7 +43,6 @@ def sieve(n : int):
     return count
 
 def main():
-
     # result = rand_number()
     if len(sys.argv) < 2:
         print("cpu test")

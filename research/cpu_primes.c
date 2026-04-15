@@ -1,6 +1,6 @@
-/*  prime.c
+/*  cpu_primes.c
     Author: J. Bloemendal
-    Sieve of Eratosthenes function and clock tracking
+    Sieve of Eratosthenes 
 
     from https://www.geeksforgeeks.org/c/c-program-to-implement-sieve-of-eratosthenes/
 
@@ -16,8 +16,8 @@
 
 // Defines
 // #define DEBUG // to enable DEBUG mode
-#define EN_PRNTS
-// #define TRACK_TIME
+#define EN_PRNTS // Enable user prints
+// #define TRACK_TIME //
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -114,7 +114,7 @@ int main(int argc, char *argv[])
   end_time = clock();
 
   // Calculate the elapsed time in milliseconds.
-  // clock ticks / CLOCKS_PER_SEC = runtime in (s)
+  // clock ticks / CLOCKS_PER_SEC = runtime (s)
   double runtime_ms = (double)(end_time - start_time) / CLOCKS_PER_SEC * 1000.0;
 
 // Check if SieveOfEratosthenes returned an error code.
