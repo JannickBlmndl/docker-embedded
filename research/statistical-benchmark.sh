@@ -2,7 +2,7 @@
 # =============================================================================
 # Docker Performance Statistical Benchmark
 # Usage:
-#   sudo ./statistical-benchmark.sh [PR_SESSIONS] [ITERATIONS] [PLATFORM_LABEL]
+#   sudo ./statistical-benchmark.sh [NR_THREADS] [ITERATIONS] [PLATFORM_LABEL]
 #
 # Examples:
 #   sudo ./statistical-benchmark.sh 1 3 RPi4B
@@ -16,14 +16,14 @@
 
 set -euo pipefail
 
-PR_SESSIONS=${1:-1} # Number of parallel sessions
+NR_THREADS=${1:-1} # Number of parallel threads
 ITERATIONS=${2:-50} # Number of experiment iterations
 PLATFORM=${3:-"unknown-platform"}
 
 RESULTS_DIR="results/${PLATFORM}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-PYTHON_SCRIPT_PATH="cpu_test.py"
+PYTHON_SCRIPT_FILENAME="cpu_test.py"
 PYTHON_UPLIM_ARG=1000 # FIXME get from bash argument
 CPU_LIMIT="1.0" # CPU limit for container (e.g., 0.5 CPU core)
 VENV_DIR=".venv" # Directory for the uv virtual environment
@@ -49,14 +49,14 @@ echo ""
 
 mkdir -p "${RESULTS_DIR}"
 
-# Pre-pull images
-# echo -e "${YELLOW}Pre-pulling images...${NC}"
-# docker pull alpine:latest > /dev/null 2>&1
+Pre-pull images
+echo -e "${YELLOW}Pre-pulling images...${NC}"
+docker pull alpine:latest > /dev/null 2>&1
 # docker pull nginx:latest > /dev/null 2>&1
 # docker pull nginx:alpine > /dev/null 2>&1
-# docker pull python:3.12-slim > /dev/null 2>&1
-# echo -e "${GREEN}Images ready.${NC}"
-# echo ""
+docker pull python:3.12-slim > /dev/null 2>&1
+echo -e "${GREEN}Images ready.${NC}"
+echo ""
 
 # =============================================================================
 # uv Setup
@@ -170,16 +170,17 @@ echo ""
 
 # =============================================================================
 # [X/10] CPU THROTTLING (CPU micro benchmark)
-# Sieve of Eratosthenes uv CPU workload {PR_SESSIONS} parallel sessions
+# Sieve of Eratosthenes uv CPU workload {NR_THREADS} parallel sessions
 # =============================================================================
 echo -e "${BLUE}[X/10] CPU Throttling (Python Script, ${ITERATIONS} iterations)...${NC}"
 CSV="${RESULTS_DIR}/03-cpu-throttling-python.csv"
 echo "Iteration,Type,Session,CPU_Limit,UpperLimit,Duration_ms,Result" > "${CSV}"
 
 # --- Run without Container (native) ---
-echo -e "${GREEN}Running CPU test directly on host (baseline) with ${PR_SESSIONS} parallel sessions...${NC}"
+echo -e "${GREEN}Running CPU test directly on host (baseline) with ${NR_THREADS} parallel sessions...${NC}"
 
-run_single_session() {
+run_single_thread()
+{
     local i=$1
     local session=$2
     sleep 0.5
@@ -190,7 +191,7 @@ run_single_session() {
     #   choose UV or not?
 
     # RESULT=$("$(pwd)/runme.exe" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
-    RESULT=$("$UV_BIN" run "${PYTHON_SCRIPT_PATH}" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
+    RESULT=$("$UV_BIN" run "${PYTHON_SCRIPT_FILENAME}" -n "${PYTHON_UPLIM_ARG}" 2>/dev/null)
     END=$(now_ns)
     # echo "[DEBUG] result='${RESULT}'" >&2
 
@@ -202,8 +203,8 @@ run_single_session() {
 
 for i in $(seq 1 "${ITERATIONS}"); do
     PIDS=()
-    for session in $(seq 1 "${PR_SESSIONS}"); do
-        run_single_session "$i" "$session" &
+    for session in $(seq 1 "${NR_THREADS}"); do
+        run_single_thread "$i" "$session" &
         PIDS+=($!)
     done
     for pid in "${PIDS[@]}"; do
@@ -228,45 +229,65 @@ echo -e "${GREEN}Host part complete.${NC}"
 # echo ""
 
 ## 
-echo -e "${GREEN}Running CPU test inside Docker container (with --cpus=${CPU_LIMIT}) and ${PR_SESSIONS} parallel sessions...${NC}"
+echo -e "${GREEN}Running CPU test inside Docker container (with --cpus=${CPU_LIMIT}) and ${NR_THREADS} parallel sessions...${NC}"
 
-run_container_session() {
+run_container_session()
+{
     local i=$1
     local session=$2
     sleep 0.5
 
+    # DEBUG CMD
     # Dockerfile entry point python3
     # CMD="docker run --cpus=${CPU_LIMIT} \
-    #   -v \"$(pwd)/${PYTHON_SCRIPT_PATH}:/${PYTHON_SCRIPT_PATH}\" \
+    #   -v \"$(pwd)/${PYTHON_SCRIPT_FILENAME}:/${PYTHON_SCRIPT_FILENAME}\" \
     #   ${DOCKER_CONTAINER_IMAGE} \
-    #   \"/${PYTHON_SCRIPT_PATH}\" -n ${PYTHON_UPLIM_ARG}"
+    #   \"/${PYTHON_SCRIPT_FILENAME}\" -n ${PYTHON_UPLIM_ARG}"
 
     # echo -e "[DEBUG] ContainerCMD: $CMD"
 
-    START=$(now_ns)
-    # RESULT=$(eval $"CMD")
-    
-    RESULT=$(docker run --rm --cpus="${CPU_LIMIT}" \
-      -v "$(pwd)/${PYTHON_SCRIPT_PATH}:/${PYTHON_SCRIPT_PATH}" \
-      "${DOCKER_CONTAINER_IMAGE}" \
-      "/${PYTHON_SCRIPT_PATH}" -n "${PYTHON_UPLIM_ARG}" 2>\
-      /dev/null)
-    
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    START=$(now_ns) # Host time tracking 
+
+    # BASH 2 secondS 100% throtte
+    RESULT=$(docker run --rm alpine sh -c '
+        START=$(date +%s); COUNT=0
+        while true; do
+            NOW=$(date +%s); ELAPSED=$((NOW - START))
+            if [ $ELAPSED -ge 2 ]; then break; fi
+            COUNT=$((COUNT + 1))
+        done
+        echo $COUNT
+    ' 2>/dev/null)
+
+    # PYTHON PRIMES WORKLOAD
+    # RESULT=$(docker run --rm  \
+    #     -v "${SCRIPT_DIR}:/app" \
+    #     python:3.12-slim \
+    #     sh -c '
+    #         python3 /app/"'"${PYTHON_SCRIPT_FILENAME}"'" -n "${PYTHON_UPLIM_ARG}"; \
+    #         EXIT_CODE=$?; \
+    #         exit $EXIT_CODE
+    #     ' 2>/dev/null \
+    # )
     END=$(now_ns)
 
     # Calculate elapsed time in milliseconds
     ELAPSED_NS=$((END - START))
     ELAPSED_MS=$(echo "scale=2; ${ELAPSED_NS} / 1000000" | bc)
     
-    # Extract the result (should be an integer count of primes)
     RESULT_INT=$(echo "$RESULT" | grep -o -E '^[0-9]+' | head -1 || echo "0")
 
+    # echo "Python script output (RESULT_INT):"
+    # echo "${RESULT}"
+    
     echo "${i},Docker,Session-${session},${CPU_LIMIT},${PYTHON_UPLIM_ARG},${ELAPSED_MS},${RESULT_INT}" >> "${CSV}"
 }
 
 for i in $(seq 1 "${ITERATIONS}"); do
     PIDS=()
-    for session in $(seq 1 "${PR_SESSIONS}"); do
+    for session in $(seq 1 "${NR_THREADS}"); do
         run_container_session "$i" "$session" &
         PIDS+=($!)
     done
